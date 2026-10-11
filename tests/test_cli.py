@@ -49,3 +49,33 @@ def test_score_ranks_and_prints(
 def test_bench_without_suite_prints_usage(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["bench"]) == 2
     assert "usage" in capsys.readouterr().out
+
+
+def test_ask_answers_or_abstains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from sufficiency import generate
+
+    class FirstWord:
+        name = "first-word"
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __call__(self, question: str, passages: Any) -> str:
+            return str(passages[0].text.split()[0])
+
+    monkeypatch.setattr(cli, "_estimator", lambda path: FakeEstimator())
+    monkeypatch.setattr(generate, "Extractive", FirstWord)
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(
+        "\n".join(
+            json.dumps({"text": t})
+            for t in ["Paris is the capital of France.", "Rome is in Italy."]
+        )
+    )
+    base = ["ask", "--corpus", str(corpus), "--estimator", "m", "--threshold", "0.5"]
+    assert cli.main([*base, "--question", "capital of France"]) == 0
+    assert capsys.readouterr().out.strip().endswith("Paris")
+    assert cli.main([*base, "--question", "Italy", "--k", "1"]) == 0
+    assert "not enough information" in capsys.readouterr().out

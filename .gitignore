@@ -16,8 +16,6 @@ htmlcov/
 
 # Secrets and local recordings
 .env
-*.cf.sqlite
-*.cf.sqlite-*
 runs/
 
 # OS / editors
@@ -25,7 +23,5 @@ runs/
 .idea/
 .vscode/
 
-# Groundsight local data
-.groundsight/
-*.gs.jsonl
+# Benchmark logs
 *.log
