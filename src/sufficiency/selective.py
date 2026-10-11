@@ -56,17 +56,22 @@ def ltt_threshold(
     multiplicity correction is needed). The null at each threshold is "the error rate
     among answered questions exceeds ``alpha``", rejected with a binomial tail test at
     level ``delta``. Testing stops at the first failure.
+
+    Thresholds that answer fewer than ``log(delta) / log(1 - alpha)`` questions are
+    skipped: even with no errors they could never be certified, so testing them would
+    only end the sequence early. The skip depends on the scores alone, not the labels.
     """
     s = np.asarray(scores, dtype=float)
     w = np.asarray(wrong, dtype=bool)
     if len(s) == 0:
         return math.inf
+    least = math.ceil(math.log(delta) / math.log(1 - alpha)) if 0 < alpha < 1 else 1
     levels = np.unique(np.quantile(s, np.linspace(1.0, 0.0, grid)))[::-1]
     chosen = math.inf
     for t in levels:
         answered = s >= t
         k = int(answered.sum())
-        if k == 0:
+        if k < least:
             continue
         if _binomial_tail(int((answered & w).sum()), k, alpha) > delta:
             break

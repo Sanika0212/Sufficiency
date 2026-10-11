@@ -90,3 +90,13 @@ def test_selective_rule_fit_and_evaluate() -> None:
     assert empty == {"coverage": 0.0, "selective_error": 0.0, "answered_and_wrong": 0.0}
     with pytest.raises(ValueError, match="unknown method"):
         SelectiveRule.fit(s, wrong, 0.1, method="magic")
+
+
+def test_ltt_handles_unbounded_scores_with_few_top_questions() -> None:
+    rng = np.random.default_rng(0)
+    scores = np.concatenate([rng.normal(5, 1, 300), rng.normal(-5, 1, 300)])  # margins
+    wrong = np.concatenate([rng.random(300) < 0.05, rng.random(300) < 0.9])
+    t = ltt_threshold(scores, wrong, alpha=0.2, delta=0.1)
+    answered = scores >= t
+    assert answered.mean() > 0.3  # the strict end has single questions; it must not stop there
+    assert wrong[answered].mean() <= 0.2
