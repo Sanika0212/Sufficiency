@@ -40,44 +40,55 @@ class Retriever(Protocol):
 
 
 class BM25:
-    """Okapi BM25 over passage title and text."""
+    """Okapi BM25 over passage title and text, with an inverted index."""
 
     name = "bm25"
 
     def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
         self.k1, self.b = k1, b
         self.passages: list[Passage] = []
-        self._tf: list[Counter[str]] = []
+        self._postings: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         self._idf: dict[str, float] = {}
-        self._lengths = np.zeros(0)
+        self._norm = np.zeros(0)
 
     def index(self, passages: Sequence[Passage]) -> None:
         self.passages = list(passages)
-        self._tf = [Counter(tokenize(f"{p.title} {p.text}")) for p in self.passages]
-        self._lengths = np.array([sum(tf.values()) for tf in self._tf], dtype=float)
-        df: Counter[str] = Counter()
-        for tf in self._tf:
-            df.update(tf.keys())
+        postings: dict[str, tuple[list[int], list[int]]] = {}
+        lengths = np.zeros(len(self.passages))
+        for i, passage in enumerate(self.passages):
+            counts = Counter(tokenize(f"{passage.title} {passage.text}"))
+            lengths[i] = sum(counts.values())
+            for term, tf in counts.items():
+                docs, freqs = postings.setdefault(term, ([], []))
+                docs.append(i)
+                freqs.append(tf)
+        avg = lengths.mean() if len(lengths) and lengths.mean() > 0 else 1.0
+        self._norm = self.k1 * (1 - self.b + self.b * lengths / avg)
         n = len(self.passages)
-        self._idf = {t: math.log(1 + (n - d + 0.5) / (d + 0.5)) for t, d in df.items()}
+        self._postings = {
+            t: (np.asarray(d, dtype=np.int64), np.asarray(f, dtype=float))
+            for t, (d, f) in postings.items()
+        }
+        self._idf = {
+            t: math.log(1 + (n - len(d) + 0.5) / (len(d) + 0.5)) for t, (d, _) in postings.items()
+        }
 
     def scores(self, query: str) -> np.ndarray:
-        if not self.passages:
-            return np.zeros(0)
-        avg = self._lengths.mean() or 1.0
         out = np.zeros(len(self.passages))
         for term in set(tokenize(query)):
-            idf = self._idf.get(term)
-            if idf is None:
+            if term not in self._postings:
                 continue
-            freqs = np.array([tf.get(term, 0) for tf in self._tf], dtype=float)
-            denom = freqs + self.k1 * (1 - self.b + self.b * self._lengths / avg)
-            out += idf * freqs * (self.k1 + 1) / np.where(denom == 0, 1, denom)
+            docs, freqs = self._postings[term]
+            out[docs] += self._idf[term] * freqs * (self.k1 + 1) / (freqs + self._norm[docs])
         return out
 
     def search(self, query: str, k: int = 5) -> list[Passage]:
         s = self.scores(query)
-        order = np.argsort(-s, kind="stable")[:k]
+        if len(s) == 0:
+            return []
+        k = min(k, len(s))
+        top = np.argpartition(-s, k - 1)[:k]
+        order = top[np.argsort(-s[top], kind="stable")]
         return [self.passages[i].with_score(float(s[i])) for i in order]
 
 
