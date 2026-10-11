@@ -36,7 +36,7 @@ class FeatureGroup(Protocol):
 
 
 class RetrievalFeatures:
-    names = ("ret_top_share", "ret_gap", "ret_entropy", "ret_count")
+    names: tuple[str, ...] = ("ret_top_share", "ret_gap", "ret_entropy", "ret_count")
 
     def compute(self, question: str, passages: Sequence[Passage]) -> list[float]:
         scores = np.array([max(p.score, 0.0) for p in passages], dtype=float)
@@ -84,7 +84,12 @@ class LexicalFeatures:
 class ReaderFeatures:
     """Best-span vs no-answer margin of an extractive SQuAD 2.0 reader, over the passages."""
 
-    names = ("reader_margin_max", "reader_margin_mean", "reader_span_prob", "reader_agree")
+    names: tuple[str, ...] = (
+        "reader_margin_max",
+        "reader_margin_mean",
+        "reader_span_prob",
+        "reader_agree",
+    )
 
     def __init__(
         self,
