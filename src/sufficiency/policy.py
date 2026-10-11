@@ -8,7 +8,7 @@ abstains when even the best action is unlikely to work.
 
 Sweeping ``cost_weight`` traces the accuracy-cost frontier. Baselines for comparison:
 always the same action, the cheapest successful action in hindsight (oracle), and a
-fixed rule cascade of the kind found in hand-built "self-healing" pipelines.
+fixed rule cascade of the kind found in hand-built correction pipelines.
 """
 
 from __future__ import annotations
