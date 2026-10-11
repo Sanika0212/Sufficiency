@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use Sufficiency, please cite it as below."
+title: "Sufficiency: calibrated context sufficiency, guaranteed abstention and learned recovery for retrieval-augmented generation"
+type: software
+authors:
+  - family-names: Najan
+    given-names: Sanika Vilas
+    email: sanikanajan@gmail.com
+version: 0.1.0
+date-released: 2026-10-11
+license: Apache-2.0
+repository-code: "https://github.com/Sanika0212/Sufficiency"
+keywords:
+  - retrieval-augmented generation
+  - selective prediction
+  - abstention
+  - conformal risk control
+  - calibration
