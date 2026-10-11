@@ -13,8 +13,9 @@ Policies compared on held-out questions:
 * Sufficiency's learned policy at several cost weights (accuracy against cost);
 * the oracle: the cheapest action that worked, in hindsight.
 
-``decompose-gold`` uses MuSiQue's annotated sub-questions. It is an upper bound for
-decomposition, not something a deployed system has.
+``decompose-llm`` asks an LLM for the sub-questions (few-shot, with ``#n`` links) and
+retrieves hop by hop. ``decompose-gold`` uses MuSiQue's annotated sub-questions instead:
+an upper bound for decomposition, not something a deployed system has.
 
     sufficiency bench recover --questions 1000 --k 5
 """
@@ -39,7 +40,9 @@ from sufficiency.model import Example, Passage
 from sufficiency.policy import COSTS, LearnedPolicy, evaluate_choices, oracle, rule_cascade
 from sufficiency.retrieval import BM25, Dense
 
-ACTION_NAMES = ("keep", "expand", "feedback", "decompose", "hop", "switch", "decompose-gold")
+BASE_ACTIONS = ("keep", "expand", "feedback", "decompose", "hop", "switch")
+GOLD = "decompose-gold"
+LLM = "decompose-llm"
 
 
 def key(passage: Passage) -> str:
@@ -52,17 +55,40 @@ def covers(example: Example, passages: Sequence[Passage], gold: dict[str, set[st
     return len(gold[example.id] & have) / max(len(gold[example.id]), 1)
 
 
-def gold_steps(example: Example) -> Callable[[str], list[str]]:
-    """A decomposer that returns MuSiQue's annotated sub-questions."""
+def fixed_steps(steps: Sequence[str]) -> Callable[[str], list[str]]:
+    """A decomposer that returns given sub-questions (annotated, or decomposed earlier)."""
 
-    def steps(question: str) -> list[str]:
-        return list(example.sub_questions) or [question]
+    def decompose(question: str) -> list[str]:
+        return list(steps) or [question]
 
-    return steps
+    return decompose
+
+
+def llm_decompositions(examples: Sequence[Example], spec: str, cache: Path) -> dict[str, list[str]]:
+    """Sub-questions from an LLM for every question, cached so reruns are free."""
+    from sufficiency.bench.selective import make_generator
+    from sufficiency.generate import ChatDecomposer
+
+    done: dict[str, list[str]] = json.loads(cache.read_text()) if cache.exists() else {}
+    todo = [ex for ex in examples if ex.id not in done]
+    if todo:
+        decomposer = ChatDecomposer(make_generator(spec))
+        for n, ex in enumerate(todo):
+            done[ex.id] = decomposer(ex.question)
+            if (n + 1) % 100 == 0:
+                print(f"    decomposed {n + 1}/{len(todo)}", flush=True)
+                cache.write_text(json.dumps(done))
+        cache.write_text(json.dumps(done))
+    return done
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     examples = musique("validation", limit=args.questions, seed=args.seed)
+    steps: dict[str, list[str]] = {}
+    if args.decomposer != "none":
+        name = args.decomposer.replace("/", "_").replace(":", "_")
+        steps = llm_decompositions(examples, args.decomposer, Path(args.out) / f"steps-{name}.json")
+    names = (*BASE_ACTIONS, *((LLM,) if steps else ()), GOLD)
     corpus = [p for ex in examples for p in ex.passages]
     gold = {ex.id: {key(p) for p in ex.passages if p.id in set(ex.supporting)} for ex in examples}
     print(f"{len(examples)} questions, corpus of {len(corpus)} paragraphs", flush=True)
@@ -73,20 +99,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     reader = ReaderFeatures()
     featurizer = Featurizer(RetrievalFeatures(), LexicalFeatures(), reader)
     answerer = Extractive(reader)  # reads the answer to each hop for "#1"-style sub-questions
-    costs = {**COSTS, "decompose-gold": 2.0}
+    costs = {**COSTS, GOLD: 5.0, LLM: 5.0}
     feats, hand = [], []
-    outcomes: dict[str, list[int]] = {a: [] for a in ACTION_NAMES}
-    spent: dict[str, list[float]] = {a: [] for a in ACTION_NAMES}
-    recall: dict[str, list[float]] = {a: [] for a in ACTION_NAMES}
-    sizes: dict[str, list[int]] = {a: [] for a in ACTION_NAMES}
+    outcomes: dict[str, list[int]] = {a: [] for a in names}
+    spent: dict[str, list[float]] = {a: [] for a in names}
+    recall: dict[str, list[float]] = {a: [] for a in names}
+    sizes: dict[str, list[int]] = {a: [] for a in names}
     for n, ex in enumerate(examples):
         start = bm25.search(ex.question, args.k)
         feats.append(featurizer(ex.question, start))
         hand.append(hand_weighted(ex.question, start))
-        for action in ACTION_NAMES:
-            if action == "decompose-gold":
+        for action in names:
+            if action in (GOLD, LLM):
+                given = ex.sub_questions if action == GOLD else steps[ex.id]
                 ctx = Context(
-                    ex.question, start, bm25, args.k, decomposer=gold_steps(ex), answerer=answerer
+                    ex.question,
+                    start,
+                    bm25,
+                    args.k,
+                    decomposer=fixed_steps(given),
+                    answerer=answerer,
                 )
                 result = ACTIONS["decompose"](ctx)
             else:
@@ -104,7 +136,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     x = np.stack(feats)
     half = len(examples) // 2
     test = {a: np.asarray(o[half:]) for a, o in outcomes.items()}
-    deployable = [a for a in ACTION_NAMES if a != "decompose-gold"]
+    deployable = [a for a in names if a != GOLD]
 
     def summarize(policy: str, choices: Sequence[str]) -> dict[str, Any]:
         stats: dict[str, Any] = {"policy": policy, **evaluate_choices(choices, test, costs)}
@@ -117,7 +149,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         return stats
 
     n_test = len(test["keep"])
-    rows = [summarize(f"always {a}", [a] * n_test) for a in ACTION_NAMES]
+    rows = [summarize(f"always {a}", [a] * n_test) for a in names]
     cascade = [rule_cascade(h, low=args.rule_low, high=args.rule_high) for h in hand[half:]]
     rows.append(summarize("rule cascade (hand-weighted)", cascade))
     for weight in (0.0, 0.02, 0.05, 0.1, 0.2):
@@ -162,6 +194,11 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--rule-low", type=float, default=0.4)
     parser.add_argument("--rule-high", type=float, default=0.7)
+    parser.add_argument(
+        "--decomposer",
+        default="local:Qwen/Qwen2.5-1.5B-Instruct",
+        help="LLM for the decompose-llm action (local:<model>, openai:<model>, or none)",
+    )
     parser.add_argument("--out", default="runs/recover")
     args = parser.parse_args(argv)
     out = Path(args.out)

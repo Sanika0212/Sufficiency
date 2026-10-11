@@ -7,6 +7,7 @@ needs no LLM and is free to run; chat models produce fluent answers.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -84,14 +85,14 @@ class LocalChat:
         self._model = AutoModelForCausalLM.from_pretrained(self.model_id, dtype=dtype)
         self._model.to(self.device).eval()
 
-    def __call__(
-        self, question: str, passages: Sequence[Passage]
+    def complete(
+        self, messages: list[dict[str, str]], max_new_tokens: int | None = None
     ) -> str:  # pragma: no cover - needs weights; exercised by the benchmarks
         import torch
 
         self._load()
         encoded = self._tokenizer.apply_chat_template(
-            prompt(question, passages),
+            messages,
             add_generation_prompt=True,
             return_tensors="pt",
             return_dict=True,
@@ -101,11 +102,16 @@ class LocalChat:
             out = self._model.generate(
                 ids,
                 attention_mask=torch.ones_like(ids),
-                max_new_tokens=self.max_new_tokens,
+                max_new_tokens=max_new_tokens or self.max_new_tokens,
                 do_sample=False,
                 pad_token_id=self._tokenizer.eos_token_id,
             )
         return str(self._tokenizer.decode(out[0, ids.shape[1] :], skip_special_tokens=True)).strip()
+
+    def __call__(
+        self, question: str, passages: Sequence[Passage]
+    ) -> str:  # pragma: no cover - needs weights; exercised by the benchmarks
+        return self.complete(prompt(question, passages))
 
 
 def load_env(path: str | os.PathLike[str] = ".env") -> None:
@@ -146,7 +152,7 @@ class OpenAIChat:
         self.max_tokens = max_tokens
         self.calls = self.input_tokens = self.output_tokens = 0
 
-    def complete(self, messages: list[dict[str, str]]) -> str:
+    def complete(self, messages: list[dict[str, str]], max_new_tokens: int | None = None) -> str:
         response = self.client.post(
             f"{self.base_url}/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"},
@@ -154,7 +160,7 @@ class OpenAIChat:
                 "model": self.model,
                 "messages": messages,
                 "temperature": 0,
-                "max_tokens": self.max_tokens,
+                "max_tokens": max_new_tokens or self.max_tokens,
             },
         )
         if not response.is_success:
@@ -175,3 +181,64 @@ class OpenAIChat:
 
     def __call__(self, question: str, passages: Sequence[Passage]) -> str:
         return self.complete(prompt(question, passages))
+
+
+DECOMPOSE_INSTRUCTION = (
+    "Break the question into simple questions that can each be answered from one "
+    "encyclopedia paragraph. Refer to the answer of an earlier step as #1, #2 and so on. "
+    "Write one numbered question per line and nothing else."
+)
+DECOMPOSE_EXAMPLES = (
+    (
+        "Who is the spouse of the director of Titanic?",
+        ["Who directed Titanic?", "Who is the spouse of #1?"],
+    ),
+    (
+        "What is the capital of the country where the Eiffel Tower is located?",
+        ["In which country is the Eiffel Tower located?", "What is the capital of #1?"],
+    ),
+    (
+        "When was the university attended by the author of Dune founded?",
+        ["Who wrote Dune?", "Which university did #1 attend?", "When was #2 founded?"],
+    ),
+)
+
+
+class Completer(Protocol):
+    def complete(
+        self, messages: list[dict[str, str]], max_new_tokens: int | None = None
+    ) -> str: ...
+
+
+class ChatDecomposer:
+    """Split a multi-hop question into sub-questions with an LLM (few-shot, ``#n`` links)."""
+
+    def __init__(self, chat: Completer, *, max_steps: int = 4) -> None:
+        self.chat = chat
+        self.max_steps = max_steps
+
+    def messages(self, question: str) -> list[dict[str, str]]:
+        out = [{"role": "system", "content": DECOMPOSE_INSTRUCTION}]
+        for q, steps in DECOMPOSE_EXAMPLES:
+            out.append({"role": "user", "content": q})
+            out.append(
+                {
+                    "role": "assistant",
+                    "content": "\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps)),
+                }
+            )
+        out.append({"role": "user", "content": question})
+        return out
+
+    @staticmethod
+    def parse(text: str) -> list[str]:
+        steps = []
+        for line in text.splitlines():
+            m = re.match(r"\s*\d+[.)]\s*(.+)", line)
+            if m and m.group(1).strip():
+                steps.append(m.group(1).strip())
+        return steps
+
+    def __call__(self, question: str) -> list[str]:
+        steps = self.parse(self.chat.complete(self.messages(question), max_new_tokens=96))
+        return steps[: self.max_steps] or [question]

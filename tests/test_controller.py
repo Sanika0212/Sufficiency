@@ -128,3 +128,25 @@ def test_openai_chat_and_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert OpenAIChat(client=client).api_key == "sk-from-file"
     load_env(tmp_path / "missing.env")
     assert isinstance(np.zeros(1), np.ndarray)
+
+
+def test_chat_decomposer_parses_numbered_steps() -> None:
+    from sufficiency.generate import ChatDecomposer
+
+    class Chat:
+        def __init__(self, reply: str) -> None:
+            self.reply = reply
+
+        def complete(self, messages, max_new_tokens=None):  # type: ignore[no-untyped-def]
+            assert messages[0]["role"] == "system"
+            assert messages[-1]["content"] == "Who founded the maker of the iPhone?"
+            return self.reply
+
+    good = ChatDecomposer(Chat("1. Who makes the iPhone?\n2) Who founded #1?\nThanks!"))
+    assert good("Who founded the maker of the iPhone?") == [
+        "Who makes the iPhone?",
+        "Who founded #1?",
+    ]
+    assert ChatDecomposer(Chat("no list here"))("Who founded the maker of the iPhone?") == [
+        "Who founded the maker of the iPhone?"
+    ]

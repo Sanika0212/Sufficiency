@@ -149,8 +149,21 @@ def test_recover_benchmark(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setattr(recover, "musique", multihop)
     monkeypatch.setattr(recover, "Dense", SecondBM25)
     monkeypatch.setattr(recover, "ReaderFeatures", ScriptedReader)
+
+    class Planner:
+        name = "planner"
+
+        def complete(self, messages, max_new_tokens=None):  # type: ignore[no-untyped-def]
+            person = messages[-1]["content"].split("where ")[1].split(" was")[0]
+            return f"1. Where was {person} born?\n2. Which river flows through #1?"
+
+    monkeypatch.setattr(selective, "make_generator", lambda spec: Planner())
     out = tmp_path / "recover"
     assert recover.main(["--questions", "80", "--k", "2", "--out", str(out)]) == 0
+    assert list(out.glob("steps-*.json"))  # decompositions are cached
+    assert recover.main(["--questions", "80", "--k", "2", "--out", str(out)]) == 0
+    plain = tmp_path / "plain"
+    assert recover.main(["--questions", "40", "--decomposer", "none", "--out", str(plain)]) == 0
     summary = json.loads((out / "results.json").read_text())
     rows = {r["policy"]: r for r in summary["rows"]}
     assert rows["always keep"]["cost"] == 0.0
@@ -158,6 +171,7 @@ def test_recover_benchmark(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert rows["always decompose-gold"]["success"] >= rows["always keep"]["success"]
     assert rows["always decompose-gold"]["recall"] >= rows["always keep"]["recall"]
     assert 0.0 <= rows["always hop"]["recall"] <= 1.0
+    assert rows["always decompose-llm"]["success"] >= rows["always keep"]["success"]
     assert "| always keep |" in (out / "results.md").read_text()
 
 
