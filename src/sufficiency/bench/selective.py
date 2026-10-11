@@ -36,7 +36,7 @@ from sufficiency.generate import Extractive, LocalChat, OpenAIChat
 from sufficiency.metrics import area_under_risk_coverage, contains, f1
 from sufficiency.selective import SelectiveRule, evaluate_rule
 
-ALPHAS = (0.1, 0.2, 0.3)
+ALPHAS = (0.1, 0.2, 0.3, 0.5)
 
 
 def correct(answer: str, answers: Sequence[str], answerable_here: bool) -> bool:
@@ -120,17 +120,18 @@ def run_dataset(name: str, args: argparse.Namespace, out: Path) -> dict[str, Any
 
 def markdown(summaries: Sequence[dict[str, Any]]) -> str:
     lines = [
-        "| Dataset | Scorer | AURC | Error at 20% target (LTT) | Coverage | "
-        "Answered-and-wrong at 10% target (CRC) | Coverage |",
-        "|---|---|---|---|---|---|---|",
+        "| Dataset | Scorer | AURC | LTT 20%: error | coverage | LTT 50%: error | coverage | "
+        "CRC 10%: answered and wrong | coverage |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for s in summaries:
         for r in s["rows"]:
-            ltt, crc = r["ltt@0.2"], r["crc@0.1"]
+            a, b, c = r["ltt@0.2"], r["ltt@0.5"], r["crc@0.1"]
             lines.append(
                 f"| {s['dataset']} | {r['scorer']} | {r['aurc']:.3f} | "
-                f"{ltt['selective_error']:.1%} | {ltt['coverage']:.1%} | "
-                f"{crc['answered_and_wrong']:.1%} | {crc['coverage']:.1%} |"
+                f"{a['selective_error']:.1%} | {a['coverage']:.1%} | "
+                f"{b['selective_error']:.1%} | {b['coverage']:.1%} | "
+                f"{c['answered_and_wrong']:.1%} | {c['coverage']:.1%} |"
             )
     return "\n".join(lines) + "\n"
 

@@ -48,7 +48,12 @@ def _binomial_tail(errors: int, trials: int, rate: float) -> float:
 
 
 def ltt_threshold(
-    scores: ArrayLike, wrong: ArrayLike, alpha: float, delta: float = 0.1, grid: int = 100
+    scores: ArrayLike,
+    wrong: ArrayLike,
+    alpha: float,
+    delta: float = 0.1,
+    grid: int = 100,
+    min_coverage: float = 0.1,
 ) -> float:
     """Lowest threshold whose selective error rate is certified below ``alpha``.
 
@@ -57,15 +62,20 @@ def ltt_threshold(
     among answered questions exceeds ``alpha``", rejected with a binomial tail test at
     level ``delta``. Testing stops at the first failure.
 
-    Thresholds that answer fewer than ``log(delta) / log(1 - alpha)`` questions are
-    skipped: even with no errors they could never be certified, so testing them would
-    only end the sequence early. The skip depends on the scores alone, not the labels.
+    The sequence starts at the strictest threshold that answers at least
+    ``min_coverage`` of the calibration questions (and at least
+    ``log(delta) / log(1 - alpha)`` of them, the fewest that could ever be certified).
+    Stricter thresholds answer so few questions that a single error would end the
+    sequence before any useful threshold is tested. The starting point depends on the
+    scores alone, not on the labels, so the guarantee is unaffected; the rule either
+    answers at least ``min_coverage`` of questions or abstains on all of them.
     """
     s = np.asarray(scores, dtype=float)
     w = np.asarray(wrong, dtype=bool)
     if len(s) == 0:
         return math.inf
     least = math.ceil(math.log(delta) / math.log(1 - alpha)) if 0 < alpha < 1 else 1
+    least = max(least, math.ceil(min_coverage * len(s)))
     levels = np.unique(np.quantile(s, np.linspace(1.0, 0.0, grid)))[::-1]
     chosen = math.inf
     for t in levels:
