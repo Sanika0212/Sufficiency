@@ -18,6 +18,11 @@ class ScriptedReader:
     """Margin is high when a passage states the asked-about capital, low otherwise."""
 
     names = ("reader_margin_max", "reader_margin_mean", "reader_span_prob", "reader_agree")
+    model_id = "scripted"
+
+    def spans(self, question: str, passages: Sequence[Passage]) -> list[tuple[float, float, str]]:
+        """The last word of each passage, as if it were the answer."""
+        return [(1.0, 0.5, p.text.rstrip(".").rsplit(" ", 1)[-1]) for p in passages]
 
     def compute(self, question: str, passages: Sequence[Passage]) -> list[float]:
         place = question.rstrip("?").split()[-1]
@@ -151,6 +156,8 @@ def test_recover_benchmark(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert rows["always keep"]["cost"] == 0.0
     assert rows["oracle (deployable actions)"]["success"] >= rows["always keep"]["success"]
     assert rows["always decompose-gold"]["success"] >= rows["always keep"]["success"]
+    assert rows["always decompose-gold"]["recall"] >= rows["always keep"]["recall"]
+    assert 0.0 <= rows["always hop"]["recall"] <= 1.0
     assert "| always keep |" in (out / "results.md").read_text()
 
 

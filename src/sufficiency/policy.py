@@ -26,6 +26,7 @@ COSTS = {
     "feedback": 1.0,
     "rewrite": 2.0,
     "decompose": 3.0,
+    "hop": 3.0,
     "switch": 1.0,
 }
 
@@ -40,7 +41,7 @@ class Decision:
 class LearnedPolicy:
     def __init__(
         self,
-        actions: Sequence[str] = ("keep", "expand", "feedback", "decompose", "switch"),
+        actions: Sequence[str] = ("keep", "expand", "feedback", "decompose", "hop", "switch"),
         *,
         costs: Mapping[str, float] | None = None,
         cost_weight: float = 0.05,

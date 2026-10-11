@@ -72,6 +72,7 @@ def test_learned_policy_beats_fixed_actions_on_synthetic_logs() -> None:
         "expand": (x[:, 1] > 0.0).astype(int),
         "decompose": (x[:, 2] > -0.5).astype(int),
         "feedback": np.zeros(n, dtype=int),
+        "hop": np.zeros(n, dtype=int),
         "switch": np.zeros(n, dtype=int),
     }
     policy = LearnedPolicy(cost_weight=0.02).fit(
@@ -102,3 +103,29 @@ def test_baselines_and_evaluation() -> None:
     assert stats == {"success": 0.0, "abstain": 0.5, "cost": 0.0}
     assert evaluate_choices([], outcomes) == {"success": 0.0, "abstain": 0.0, "cost": 0.0}
     assert COSTS["decompose"] == pytest.approx(3.0)
+
+
+def test_decompose_fills_placeholders_with_earlier_answers() -> None:
+    def answer(query: str, passages: list[Passage]) -> str:
+        return "Ulm" if passages and passages[0].id == "einstein" else "Danube"
+
+    ctx = context(
+        "Which river flows through the city where Einstein was born?",
+        k=1,
+        decomposer=lambda q: ["Einstein >> place of birth", "Which river flows through #1?"],
+        answerer=answer,
+    )
+    out = ACTIONS["decompose"](ctx)
+    assert {"einstein", "ulm"} <= {p.id for p in out.passages}
+    assert "bridges: Ulm" in out.detail
+    assert out.cost == 1 + 2 + 2  # decomposition, two retrievals, two answers
+
+
+def test_hop_follows_names_from_the_top_passages() -> None:
+    ctx = context("Which river flows through the city where Einstein was born?", k=1)
+    out = ACTIONS["hop"](ctx)
+    assert "ulm" in {p.id for p in out.passages}  # "Ulm" is named in Einstein's passage
+    assert out.cost >= 1
+    assert out.detail.startswith("followed")
+    bare = Context("q", [Passage("x", "no names here")], ctx.retriever, 1)
+    assert ACTIONS["hop"](bare).detail.startswith("expanded")  # nothing to follow

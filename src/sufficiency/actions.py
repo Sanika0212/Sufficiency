@@ -11,9 +11,17 @@ action        what it does                                                      
 ``expand``    retrieve twice as many passages                                     1
 ``feedback``  add the top passages' most distinctive terms to the query (no LLM)  1
 ``rewrite``   ask an LLM to rewrite the query, then retrieve                      2
-``decompose`` split into sub-questions, retrieve for each, merge                  1 + n
+``decompose`` split into sub-questions, retrieve for each in turn, merge          1 + n
+``hop``       follow entities named in the top passages to their own passages     3
 ``switch``    retrieve with a different retriever                                 1
 ============  ==================================================================  ======
+
+Multi-hop questions need the answer to one hop before the next can be retrieved
+("Where was the founder of #1 born?"). ``decompose`` therefore works through the
+sub-questions in order and, when an ``answerer`` is given, fills each ``#n`` with the
+answer to sub-question ``n`` read from the passages retrieved for it (each answer counts
+as a call). ``hop`` needs no decomposition: it retrieves again for the question together
+with each of the names that the top passages mention and the question does not.
 """
 
 from __future__ import annotations
@@ -28,6 +36,9 @@ from sufficiency.retrieval import Retriever, tokenize
 
 Rewriter = Callable[[str], str]
 Decomposer = Callable[[str], list[str]]
+Answerer = Callable[[str, Sequence[Passage]], str]
+_PLACEHOLDER = re.compile(r"#(\d+)")
+_NAME = re.compile(r"\b[A-Z][\w'\-]+(?:\s+(?:of|the|de|von|van|[A-Z][\w'\-]+))*")
 
 
 @dataclass
@@ -41,6 +52,7 @@ class Context:
     alternates: Sequence[Retriever] = ()
     rewriter: Rewriter | None = None
     decomposer: Decomposer | None = None
+    answerer: Answerer | None = None
     log: list[str] = field(default_factory=list)
 
 
@@ -107,10 +119,45 @@ def split_question(question: str) -> list[str]:
 def decompose(ctx: Context) -> Outcome:
     subs = (ctx.decomposer or split_question)(ctx.question)
     per = max(2, ctx.k // max(len(subs), 1) + 1)
-    found = [ctx.retriever.search(s, per) for s in subs]
+    found: list[list[Passage]] = []
+    answers: list[str] = []
+    calls = 1.0 if ctx.decomposer is not None else 0.0
+    for sub in subs:
+        query = _PLACEHOLDER.sub(
+            lambda m: answers[int(m.group(1)) - 1] if int(m.group(1)) <= len(answers) else "",
+            sub,
+        )
+        query = query.replace(">>", " ").strip() or ctx.question
+        hits = ctx.retriever.search(query, per)
+        found.append(hits)
+        calls += 1
+        if ctx.answerer is not None and _PLACEHOLDER.search(" ".join(subs)):
+            answers.append(ctx.answerer(query, hits).strip())
+            calls += 1
+        else:
+            answers.append("")
     merged = _merge(*found, ctx.passages, k=ctx.k + per)
-    llm = 1.0 if ctx.decomposer is not None else 0.0
-    return Outcome(merged, llm + len(subs), f"retrieved for {len(subs)} sub-questions")
+    detail = f"retrieved for {len(subs)} sub-questions" + (
+        f" (bridges: {', '.join(a for a in answers if a)})" if any(answers) else ""
+    )
+    return Outcome(merged, calls, detail)
+
+
+def hop(ctx: Context, names: int = 3, per: int = 2) -> Outcome:
+    """Retrieve again for the question plus each name the top passages add to it."""
+    asked = set(tokenize(ctx.question))
+    counts: Counter[str] = Counter()
+    for passage in ctx.passages[:3]:
+        for name in _NAME.findall(f"{passage.title}. {passage.text}"):
+            words = set(tokenize(name))
+            if words and not words <= asked:
+                counts[name] += 1
+    chosen = [n for n, _ in counts.most_common(names)]
+    if not chosen:
+        return feedback(ctx)
+    found = [ctx.retriever.search(f"{ctx.question} {name}", per) for name in chosen]
+    merged = _merge(ctx.passages, *found, k=ctx.k + per)
+    return Outcome(merged, float(len(chosen)), f"followed {chosen}")
 
 
 def switch(ctx: Context) -> Outcome:
@@ -127,5 +174,6 @@ ACTIONS: dict[str, Callable[[Context], Outcome]] = {
     "feedback": feedback,
     "rewrite": rewrite,
     "decompose": decompose,
+    "hop": hop,
     "switch": switch,
 }

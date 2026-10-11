@@ -8,6 +8,7 @@ is in the new context.
 Policies compared on held-out questions:
 
 * each fixed action applied to every question (``keep`` is no correction);
+  decomposition works hop by hop, filling ``#1`` with the reader's answer to hop 1;
 * a rule cascade on a hand-weighted confidence score;
 * Sufficiency's learned policy at several cost weights (accuracy against cost);
 * the oracle: the cheapest action that worked, in hindsight.
@@ -32,21 +33,23 @@ from sufficiency.actions import ACTIONS, Context
 from sufficiency.bench.estimate import hand_weighted
 from sufficiency.data import musique
 from sufficiency.features import Featurizer, LexicalFeatures, ReaderFeatures, RetrievalFeatures
+from sufficiency.generate import Extractive
 from sufficiency.metrics import normalize
 from sufficiency.model import Example, Passage
 from sufficiency.policy import COSTS, LearnedPolicy, evaluate_choices, oracle, rule_cascade
 from sufficiency.retrieval import BM25, Dense
 
-ACTION_NAMES = ("keep", "expand", "feedback", "decompose", "switch", "decompose-gold")
+ACTION_NAMES = ("keep", "expand", "feedback", "decompose", "hop", "switch", "decompose-gold")
 
 
 def key(passage: Passage) -> str:
     return normalize(passage.text)[:300]
 
 
-def covers(example: Example, passages: Sequence[Passage], gold: dict[str, set[str]]) -> bool:
+def covers(example: Example, passages: Sequence[Passage], gold: dict[str, set[str]]) -> float:
+    """Share of the supporting paragraphs that are in ``passages``."""
     have = {key(p) for p in passages}
-    return gold[example.id] <= have
+    return len(gold[example.id] & have) / max(len(gold[example.id]), 1)
 
 
 def gold_steps(example: Example) -> Callable[[str], list[str]]:
@@ -67,11 +70,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     bm25.index(corpus)
     dense = Dense()
     dense.index(corpus)
-    featurizer = Featurizer(RetrievalFeatures(), LexicalFeatures(), ReaderFeatures())
+    reader = ReaderFeatures()
+    featurizer = Featurizer(RetrievalFeatures(), LexicalFeatures(), reader)
+    answerer = Extractive(reader)  # reads the answer to each hop for "#1"-style sub-questions
     costs = {**COSTS, "decompose-gold": 2.0}
     feats, hand = [], []
     outcomes: dict[str, list[int]] = {a: [] for a in ACTION_NAMES}
     spent: dict[str, list[float]] = {a: [] for a in ACTION_NAMES}
+    recall: dict[str, list[float]] = {a: [] for a in ACTION_NAMES}
     sizes: dict[str, list[int]] = {a: [] for a in ACTION_NAMES}
     for n, ex in enumerate(examples):
         start = bm25.search(ex.question, args.k)
@@ -79,12 +85,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         hand.append(hand_weighted(ex.question, start))
         for action in ACTION_NAMES:
             if action == "decompose-gold":
-                ctx = Context(ex.question, start, bm25, args.k, decomposer=gold_steps(ex))
+                ctx = Context(
+                    ex.question, start, bm25, args.k, decomposer=gold_steps(ex), answerer=answerer
+                )
                 result = ACTIONS["decompose"](ctx)
             else:
-                ctx = Context(ex.question, start, bm25, args.k, alternates=[dense])
+                ctx = Context(
+                    ex.question, start, bm25, args.k, alternates=[dense], answerer=answerer
+                )
                 result = ACTIONS[action](ctx)
-            outcomes[action].append(int(covers(ex, result.passages, gold)))
+            share = covers(ex, result.passages, gold)
+            outcomes[action].append(int(share == 1.0))
+            recall[action].append(share)
             spent[action].append(result.cost)
             sizes[action].append(len(result.passages))
         if (n + 1) % 100 == 0:
@@ -100,6 +112,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         # measured cost (retrieval and LLM calls actually made) and final context size
         stats["cost"] = sum(spent[c][half + i] for i, c in idx) / max(len(choices), 1)
         stats["passages"] = sum(sizes[c][half + i] for i, c in idx) / max(len(idx), 1)
+        stats["recall"] = sum(recall[c][half + i] for i, c in idx) / max(len(choices), 1)
         stats["mix"] = {a: choices.count(a) / len(choices) for a in sorted(set(choices))}
         return stats
 
@@ -120,6 +133,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "corpus": len(corpus),
         "k": args.k,
         "base_rates": {a: float(np.mean(o)) for a, o in outcomes.items()},
+        "base_recall": {a: float(np.mean(r)) for a, r in recall.items()},
         "rows": rows,
     }
 
@@ -129,13 +143,14 @@ def markdown(summary: dict[str, Any]) -> str:
         f"{summary['test_questions']} held-out MuSiQue questions; corpus of "
         f"{summary['corpus']} paragraphs; top {summary['k']} from BM25.",
         "",
-        "| Policy | Context sufficient | Abstained | Calls per question | Passages |",
-        "|---|---|---|---|---|",
+        "| Policy | Context sufficient | Supporting paragraphs found | Abstained | "
+        "Calls per question | Passages |",
+        "|---|---|---|---|---|---|",
     ]
     for r in summary["rows"]:
         lines.append(
-            f"| {r['policy']} | {r['success']:.1%} | {r['abstain']:.1%} | {r['cost']:.2f} | "
-            f"{r['passages']:.1f} |"
+            f"| {r['policy']} | {r['success']:.1%} | {r['recall']:.1%} | {r['abstain']:.1%} | "
+            f"{r['cost']:.2f} | {r['passages']:.1f} |"
         )
     return "\n".join(lines) + "\n"
 
