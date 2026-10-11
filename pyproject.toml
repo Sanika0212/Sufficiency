@@ -53,6 +53,10 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PT"]
 # SIM905: word lists read better as one split string than as many quoted items.
 ignore = ["RUF001", "RUF002", "RUF003", "SIM905"]
 
+[tool.ruff.lint.per-file-ignores]
+# SVG templates are clearer as long lines
+"scripts/make_figures.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

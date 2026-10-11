@@ -90,6 +90,7 @@ def run_dataset(name: str, args: argparse.Namespace, out: Path) -> dict[str, Any
         "reader margin": x[:, featurizer.names.index("reader_margin_max")],
     }
     half = len(ok) // 2
+    np.savez(out / f"scores-{name}.npz", ok=ok, half=half, **scorers)
     rows = []
     for scorer, s in scorers.items():
         row: dict[str, Any] = {
