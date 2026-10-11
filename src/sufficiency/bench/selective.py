@@ -66,17 +66,20 @@ def run_dataset(name: str, args: argparse.Namespace, out: Path) -> dict[str, Any
     start = args.train if name == "hotpotqa" else 0
     examples = examples[start : start + len(x)]
     answers_file = out / f"answers-{name}-{args.generator.replace('/', '_').replace(':', '_')}.json"
+    partial = answers_file.with_suffix(".partial.json")
     if answers_file.exists():
         generated = json.loads(answers_file.read_text())
-    else:
-        generator = make_generator(args.generator)
-        generated = []
-        for n, ex in enumerate(examples):
-            passages = top_k(ex, args.k)
-            generated.append(generator(ex.question, passages))
-            if (n + 1) % 200 == 0:
+    else:  # resumable: answers are saved every 100 questions
+        generated = json.loads(partial.read_text()) if partial.exists() else []
+        generator = make_generator(args.generator) if len(generated) < len(examples) else None
+        for n, ex in enumerate(examples[len(generated) :], start=len(generated)):
+            assert generator is not None
+            generated.append(generator(ex.question, top_k(ex, args.k)))
+            if (n + 1) % 100 == 0:
+                partial.write_text(json.dumps(generated))
                 print(f"    answered {n + 1}/{len(examples)}", flush=True)
         answers_file.write_text(json.dumps(generated))
+        partial.unlink(missing_ok=True)
     ok = np.array(
         [
             correct(a, ex.answers, sufficient(ex, top_k(ex, args.k)))
