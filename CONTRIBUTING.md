@@ -15,8 +15,8 @@ uv sync --extra models --extra bench --extra viz
 Every pull request must pass the same checks CI runs:
 
 ```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
+uv run ruff check src tests scripts examples
+uv run ruff format --check src tests scripts examples
 uv run mypy
 uv run coverage run -m pytest && uv run coverage report --fail-under=85
 ```
