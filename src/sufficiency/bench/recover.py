@@ -7,11 +7,11 @@ is in the new context.
 
 Policies compared on held-out questions:
 
-* each fixed action applied to every question (``keep`` is no correction);
+- each fixed action applied to every question (``keep`` is no correction);
   decomposition works hop by hop, filling ``#1`` with the reader's answer to hop 1;
-* a rule cascade on a hand-weighted confidence score;
-* Sufficiency's learned policy at several cost weights (accuracy against cost);
-* the oracle: the cheapest action that worked, in hindsight.
+- a rule cascade on a hand-weighted confidence score;
+- Sufficiency's learned policy at several cost weights (accuracy against cost);
+- the oracle: the cheapest action that worked, in hindsight.
 
 ``decompose-llm`` asks an LLM for the sub-questions (few-shot, with ``#n`` links) and
 retrieves hop by hop. ``decompose-gold`` uses MuSiQue's annotated sub-questions instead:

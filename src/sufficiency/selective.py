@@ -3,9 +3,9 @@
 Answer when the sufficiency estimate is at least ``threshold``; otherwise abstain. Two
 ways to set the threshold from a labelled calibration set, for two different promises:
 
-* :func:`crc_threshold` (conformal risk control): the share of *all* questions that are
+- :func:`crc_threshold` (conformal risk control): the share of *all* questions that are
   answered wrongly is at most ``alpha``, in expectation over calibration sets.
-* :func:`ltt_threshold` (learn then test): the error rate *among answered questions*
+- :func:`ltt_threshold` (learn then test): the error rate *among answered questions*
   is at most ``alpha`` with probability at least ``1 - delta``. This is usually the
   promise a product needs ("when it answers, it is right 90% of the time"), at the cost
   of answering less.

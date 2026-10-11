@@ -2,11 +2,11 @@
 
 Three groups, each usable alone:
 
-* :class:`RetrievalFeatures`: how decisively the retriever ranked the passages (top
+- :class:`RetrievalFeatures`: how decisively the retriever ranked the passages (top
   score share, gap to the runner-up, entropy of the score distribution).
-* :class:`LexicalFeatures`: how much of the question's content the passages cover, and
+- :class:`LexicalFeatures`: how much of the question's content the passages cover, and
   cues for multi-hop questions.
-* :class:`ReaderFeatures`: an extractive reader trained with unanswerable questions
+- :class:`ReaderFeatures`: an extractive reader trained with unanswerable questions
   (SQuAD 2.0) scores the best answer span against the "no answer" option. This is the
   strongest single signal for single-hop questions and runs locally.
 

@@ -10,10 +10,10 @@ The test questions are split in half: the first half calibrates each selection r
 and the second half measures it. For each scorer (the calibrated estimator, the
 hand-weighted blend, the reader margin) the benchmark reports:
 
-* the area under the risk-coverage curve (lower is better);
-* for each target error rate ``alpha``, the learn-then-test threshold's achieved error
+- the area under the risk-coverage curve (lower is better);
+- for each target error rate ``alpha``, the learn-then-test threshold's achieved error
   among answered questions and its coverage on the held-out half;
-* the same for conformal risk control (answered-and-wrong rate).
+- the same for conformal risk control (answered-and-wrong rate).
 
     sufficiency bench selective --datasets squad_v2 musique hotpotqa --generator extractive
 """

@@ -7,12 +7,12 @@ simply "answerable").
 
 Scorers compared:
 
-* ``estimator``: Sufficiency's calibrated model (retrieval, lexical and reader features);
-* ``estimator (no reader)``: the same without the reader model;
-* ``hand-weighted``: a fixed-weight blend of top score, score drop-off, coherence between
+- ``estimator``: Sufficiency's calibrated model (retrieval, lexical and reader features);
+- ``estimator (no reader)``: the same without the reader model;
+- ``hand-weighted``: a fixed-weight blend of top score, score drop-off, coherence between
   passages and question coverage, with hand-set weights (the common design);
-* ``reader margin``: the extractive reader's span-vs-no-answer margin alone;
-* ``retrieval score``: the top passage's retrieval score share alone.
+- ``reader margin``: the extractive reader's span-vs-no-answer margin alone;
+- ``retrieval score``: the top passage's retrieval score share alone.
 
 The estimators are trained on a training split and evaluated on held-out questions.
 Reported: AUROC, expected calibration error, Brier score. Hand-set scores are not
