@@ -60,7 +60,7 @@ class SufficiencyEstimator:
 
         x = np.asarray(features, dtype=float)
         y = np.asarray(labels, dtype=int)
-        folds = max(2, min(self.folds, int(np.bincount(y, minlength=2).min())))
+        folds = max(2, min(self.folds, int(np.min(np.bincount(y, minlength=2)))))
         self.model = CalibratedClassifierCV(self._pipeline(), method=self.calibration, cv=folds)
         self.model.fit(x, y)
         return self
