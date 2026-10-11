@@ -100,3 +100,26 @@ def test_ltt_handles_unbounded_scores_with_few_top_questions() -> None:
     answered = scores >= t
     assert answered.mean() > 0.3  # the strict end has single questions; it must not stop there
     assert wrong[answered].mean() <= 0.2
+
+
+@pytest.mark.parametrize("calibration", ["isotonic", "sigmoid"])
+def test_json_export_matches_the_fitted_model(tmp_path: Path, calibration: str) -> None:
+    rng = np.random.default_rng(1)
+    x = rng.normal(size=(300, 4))
+    y = (x[:, 0] + 0.5 * rng.normal(size=300) > 0).astype(int)
+    featurizer = Featurizer(RetrievalFeatures())
+    est = SufficiencyEstimator(featurizer, calibration=calibration).fit(x, y)
+    path = est.save_json(tmp_path / "e.json")
+    loaded = SufficiencyEstimator(featurizer).load_json(path)
+    assert np.allclose(loaded.predict_matrix(x), est.predict_matrix(x))
+    with pytest.raises(ValueError, match="different features"):
+        SufficiencyEstimator(Featurizer()).load_json(path)
+    with pytest.raises(RuntimeError):
+        SufficiencyEstimator(featurizer).to_dict()
+
+
+def test_pretrained_estimators_ship_with_the_package() -> None:
+    for name in ("squad_v2", "musique", "hotpotqa"):
+        est = SufficiencyEstimator.pretrained(name)
+        p = est.predict_matrix(np.zeros(len(est.featurizer.names)))
+        assert 0.0 <= float(p[0]) <= 1.0

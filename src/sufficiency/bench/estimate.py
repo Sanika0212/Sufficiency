@@ -142,6 +142,7 @@ def run_dataset(
         "coefficients": full.coefficients(),
     }
     full.save(out / f"estimator-{name}.joblib")
+    full.save_json(out / f"estimator-{name}.json")  # what the package ships
     for r in results:
         ece = "n/a" if r["ece"] is None else f"{r['ece']:.3f}"
         print(f"  {r['scorer']:24s} AUROC {r['auroc']:.3f}  ECE {ece}", flush=True)
