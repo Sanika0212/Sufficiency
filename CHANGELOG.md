@@ -15,7 +15,8 @@ All notable changes to this project are documented here. The format follows
    answered questions at most `alpha` with probability `1 - delta`) and conformal risk
    control (answered-and-wrong rate at most `alpha` in expectation).
 3. Recovery actions over any retriever (expand, pseudo-relevance feedback, LLM rewrite,
-   decomposition, switching retriever) with explicit costs, and `LearnedPolicy`, which
+   hop-by-hop decomposition with `ChatDecomposer`, following names, switching
+   retriever) with explicit costs, and `LearnedPolicy`, which
    learns from logged outcomes which action is likely to make the context sufficient
    and trades that off against cost.
 4. `Controller`: retrieve, estimate, recover if worthwhile, then answer or abstain, with
@@ -26,3 +27,5 @@ All notable changes to this project are documented here. The format follows
 7. Benchmarks on SQuAD v2, MuSiQue and HotpotQA: `bench estimate`, `bench selective`
    and `bench recover`, with `scripts/make_figures.py` for every README figure.
 8. Command line: `sufficiency score`, `sufficiency ask` and `sufficiency bench`.
+9. Shipped estimators for SQuAD v2, MuSiQue and HotpotQA as plain JSON
+   (`SufficiencyEstimator.pretrained`).

@@ -141,11 +141,67 @@ questions and tested on 1,000 others.
 
 ### 2. Answer or abstain, with a guarantee
 
-<!-- selective results -->
+Each held-out question is answered from its top 5 passages, by the extractive reader
+(no LLM) or by a local LLM (Qwen2.5-1.5B). A rule answers only when the score clears a
+threshold set on half of the questions, for a promise chosen in advance; the other half
+measures it, and every number is the average over 200 random halvings.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/risk-coverage-dark.png">
+  <img alt="Risk-coverage curves: with the estimator, error among answered questions stays low until most questions are answered; rings show the certified thresholds" src="docs/assets/risk-coverage-light.png" width="100%">
+</picture>
+
+| Setting | Always answering: wrong | Target | Sufficiency estimator: error / answered | Hand-weighted blend: error / answered |
+|---|---|---|---|---|
+| SQuAD v2, extractive reader | 54% | 20% error among answered | **14.5% / 39%** | none certified |
+| SQuAD v2, local LLM | 58% | 50% | **44.5% / 76%** | 1.4% / 0.5% |
+| HotpotQA, local LLM | 56% | 50% | **40.8% / 51%** | 4.2% / 2.4% |
+| MuSiQue, local LLM | 77% | 50% | none certified (abstains) | none certified |
+
+1. **Learn then test keeps its promise** in every setting: the achieved error stays
+   under the target, and the rule abstains when it cannot certify one (MuSiQue, where a
+   1.5B model on four-hop questions is wrong 77% of the time).
+2. **Calibration is what makes the guarantee usable.** The hand-weighted score ranks
+   too poorly for any threshold to be certified at a useful coverage.
+3. **Conformal risk control** (at most 10% of all questions answered wrongly, on
+   average) holds too: 9.0% to 10.0% for the estimator in every setting.
+
+Here an answer counts as right when it matches the reference. A stricter definition,
+right only when the context was also sufficient, gives the same picture on SQuAD and
+leaves almost nothing certifiable on the multi-hop sets (3% of HotpotQA); both are in
+[docs/benchmarks.md](docs/benchmarks.md).
+
 
 ### 3. Which fix works, and at what cost?
 
-<!-- recovery results -->
+Open retrieval over a corpus of 20,000 MuSiQue paragraphs (2 to 4 hops). With BM25's
+top 5, every supporting paragraph is present for only 8% of questions. Each fix is run
+on every question; the learned policy is fitted on 500 questions and measured on 500
+others.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/recovery-dark.png">
+  <img alt="Scatter of success against calls per question: the learned policy reaches 18% at 2.5 calls, matching LLM decomposition at 5 calls; the rule cascade stays at 9%" src="docs/assets/recovery-light.png" width="100%">
+</picture>
+
+| Policy | Context sufficient | Supporting paragraphs found | Calls per question |
+|---|---|---|---|
+| No fix | 8.2% | 36.8% | 0 |
+| Rule cascade on the hand-weighted score | 8.8% | 37.2% | 1.0 |
+| Best single cheap fix (switch to dense retrieval) | 12.0% | 45.1% | 1.0 |
+| LLM decomposition, hop by hop, for every question | 17.4% | 46.7% | 5.0 |
+| **Learned policy** (cost weight 0.02) | **18.0%** | **47.6%** | **2.5** |
+| Annotated sub-questions, hop by hop (upper bound) | 33.6% | 59.2% | 6.3 |
+
+1. **The learned policy matches the best fix at half its cost.** It decomposes 40% of
+   the questions, switches retriever for 45%, expands 8% and leaves 7% alone.
+2. **The fixed rule cascade barely helps** (8.2% to 8.8%): "rewrite when confidence is
+   middling" spends a call on most questions for almost nothing.
+3. **Decomposition only works hop by hop.** Retrieving for all sub-questions at once
+   leaves the later hops ("Where was #1 born?") without their subject; answering hop 1
+   first and filling it in quadruples the share of complete contexts with annotated
+   sub-questions (8% to 34%). An LLM's own decompositions reach half of that so far.
+
 
 ## How it works
 
