@@ -1,13 +1,18 @@
 """Benchmark 2: answer or abstain, with a guaranteed error rate.
 
 Uses the same held-out questions as ``estimate`` (and the estimators it saved). Each
-question is answered from its top ``k`` passages. The answer counts as correct only if
-the question is answerable from those passages and the answer matches. For a
-question the passages cannot answer, any answer is wrong; abstaining is the right
-behaviour.
+question is answered from its top ``k`` passages. Two definitions of a correct answer:
 
-The test questions are split in half: the first half calibrates each selection rule,
-and the second half measures it. For each scorer (the calibrated estimator, the
+- ``grounded`` (default): the passages are sufficient *and* the answer matches; an answer
+  from an insufficient context counts as wrong even if it happens to match, because it
+  could only be a guess;
+- ``match``: the answer matches a reference (contains it, or token F1 at least 0.5), as
+  in standard selective question answering.
+
+The test questions are split in half: one half calibrates each selection rule, the
+other measures it. The table reports the average over ``--splits`` random halvings,
+because a guarantee is about the rule's true error and a single test half fluctuates
+around it. For each scorer (the calibrated estimator, the
 hand-weighted blend, the reader margin) the benchmark reports:
 
 - the area under the risk-coverage curve (lower is better);
@@ -82,7 +87,7 @@ def run_dataset(name: str, args: argparse.Namespace, out: Path) -> dict[str, Any
         partial.unlink(missing_ok=True)
     ok = np.array(
         [
-            correct(a, ex.answers, sufficient(ex, top_k(ex, args.k)))
+            correct(a, ex.answers, sufficient(ex, top_k(ex, args.k)) or args.correctness == "match")
             for a, ex in zip(generated, examples, strict=True)
         ]
     )
@@ -105,6 +110,7 @@ def run_dataset(name: str, args: argparse.Namespace, out: Path) -> dict[str, Any
                 rule = SelectiveRule.fit(s[:half], wrong[:half], alpha, method=method, delta=0.1)
                 stats = evaluate_rule(rule, s[half:], wrong[half:])
                 row[f"{method}@{alpha}"] = stats
+        row["splits"] = repeated_splits(s, wrong, args.splits, args.seed)
         rows.append(row)
         ltt = row["ltt@0.2"]
         print(
@@ -115,9 +121,33 @@ def run_dataset(name: str, args: argparse.Namespace, out: Path) -> dict[str, Any
     return {
         "dataset": name,
         "generator": args.generator,
+        "correctness": args.correctness,
         "questions": len(ok),
         "accuracy_if_always_answering": float(ok.mean()),
         "rows": rows,
+    }
+
+
+def repeated_splits(
+    scores: np.ndarray, wrong: np.ndarray, splits: int, seed: int
+) -> dict[str, dict[str, float]]:
+    """Each rule's held-out error and coverage, averaged over random calibration splits.
+
+    A guarantee is about the rule's true error, while one test half fluctuates around
+    it; averaging over many random halves is how the guarantee shows in data.
+    """
+    rng = np.random.default_rng(seed)
+    out: dict[str, list[dict[str, float]]] = {}
+    for _ in range(splits):
+        order = rng.permutation(len(scores))
+        cal, test = order[: len(order) // 2], order[len(order) // 2 :]
+        for alpha in ALPHAS:
+            for method in ("ltt", "crc"):
+                rule = SelectiveRule.fit(scores[cal], wrong[cal], alpha, method=method, delta=0.1)
+                stats = evaluate_rule(rule, scores[test], wrong[test])
+                out.setdefault(f"{method}@{alpha}", []).append(stats)
+    return {
+        key: {k: float(np.mean([r[k] for r in rows])) for k in rows[0]} for key, rows in out.items()
     }
 
 
@@ -129,7 +159,8 @@ def markdown(summaries: Sequence[dict[str, Any]]) -> str:
     ]
     for s in summaries:
         for r in s["rows"]:
-            a, b, c = r["ltt@0.2"], r["ltt@0.5"], r["crc@0.1"]
+            means = r.get("splits") or r
+            a, b, c = means["ltt@0.2"], means["ltt@0.5"], means["crc@0.1"]
             lines.append(
                 f"| {s['dataset']} | {r['scorer']} | {r['aurc']:.3f} | "
                 f"{a['selective_error']:.1%} | {a['coverage']:.1%} | "
@@ -147,6 +178,13 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument("--train", type=int, default=1500, help="as passed to estimate")
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--splits", type=int, default=200, help="random calibration splits")
+    parser.add_argument(
+        "--correctness",
+        choices=["grounded", "match"],
+        default="grounded",
+        help="grounded: right only from a sufficient context; match: the answer matches",
+    )
     parser.add_argument("--out", default="runs/selective")
     args = parser.parse_args(argv)
     out = Path(args.out)
