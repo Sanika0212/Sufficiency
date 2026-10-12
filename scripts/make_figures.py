@@ -74,6 +74,7 @@ THEMES = {
 }
 
 DATASETS = {"squad_v2": "SQuAD v2", "musique": "MuSiQue", "hotpotqa": "HotpotQA"}
+TARGETS = {"squad_v2": 0.2, "musique": 0.5, "hotpotqa": 0.5}  # error target per dataset
 SCORERS = {
     "estimator": ("Sufficiency estimator", 0),
     "hand-weighted": ("Hand-weighted blend", 1),
@@ -339,8 +340,8 @@ def plot_risk_coverage(
         fig,
         "Answer only when the context is enough",
         "Error rate among answered questions (y) as more questions are answered (x), "
-        "highest score first, on\nheld-out questions. Rings mark the threshold certified for "
-        "at most 20% error (90% confidence).",
+        "highest score first, on\nheld-out questions. Rings: the certified threshold's average "
+        "error and coverage (target dashed: 20% or 50%).",
         theme,
     )
     for ax, (name, data) in zip(axes, selective.items(), strict=True):
@@ -350,7 +351,8 @@ def plot_risk_coverage(
             cov, risk = risk_coverage(data[scorer][half:], ok[half:])
             start = 19  # skip the first answers, where one error swings the rate wildly
             ax.plot(cov[start:], risk[start:], color=theme.series[slot], lw=2)
-            point = rows[scorer]["ltt@0.2"]
+            alpha = TARGETS.get(name, 0.2)
+            point = (rows[scorer].get("splits") or rows[scorer])[f"ltt@{alpha}"]
             if point["coverage"] > 0:
                 ax.scatter(
                     [point["coverage"]],
@@ -361,7 +363,7 @@ def plot_risk_coverage(
                     linewidths=2,
                     zorder=4,
                 )
-        ax.axhline(0.2, color=theme.ink, lw=1, ls=(0, (3, 2)))
+        ax.axhline(TARGETS.get(name, 0.2), color=theme.ink, lw=1, ls=(0, (3, 2)))
         ax.set_xlim(0, 1.02)
         ax.set_ylim(0, 1)
         _percent_axis(ax, "x", (0.25, 0.5, 0.75, 1.0))
@@ -381,7 +383,7 @@ def plot_risk_coverage(
     handles.append(Line2D([0], [0], color=theme.ink, lw=1, ls=(0, (3, 2))))
     fig.legend(
         handles,
-        [*(label for label, _ in SCORERS.values()), "20% target"],
+        [*(label for label, _ in SCORERS.values()), "error target"],
         loc="lower center",
         ncol=4,
         bbox_to_anchor=(0.5, 0.0),
@@ -397,7 +399,7 @@ ACTION_LABELS = {
     "decompose": "split the question",
     "hop": "follow names",
     "switch": "switch to dense",
-    "decompose-llm": "LLM decomposition, hop by hop",
+    "decompose-llm": "LLM decomposition",
 }
 
 
@@ -437,12 +439,28 @@ def plot_recovery(summary: dict[str, Any], out: Path, mode: str) -> Path:
         name = p.removeprefix("always ")
         labels.append((r["cost"], r["success"], ACTION_LABELS.get(name, name)))
     span = top * 1.18 + 0.02
-    for (x, y, text), (_, ly, _) in zip(
-        sorted(labels, key=lambda p: p[1]), _spread(labels, gap=span * 0.075), strict=True
-    ):
-        lx = x + 0.35
+    # points crowded around one call per question get their labels in the free space
+    # below them, so the learned policy's line stays visible
+    crowded = sorted((p for p in labels if 0.5 <= p[0] <= 1.6), key=lambda p: -p[1])
+    placed = [(x, y, t, 1.6, span * (0.23 - 0.058 * i)) for i, (x, y, t) in enumerate(crowded)]
+    rest = [p for p in labels if p not in crowded]
+    spread = _spread(rest, gap=span * 0.075)
+    placed += [
+        (x, y, t, x + 0.35, ly)
+        for (x, y, t), (_, ly, _) in zip(sorted(rest, key=lambda p: p[1]), spread, strict=True)
+    ]
+    for x, y, text, lx, ly in placed:
         ax.plot([x + 0.04, lx - 0.03], [y, ly], color=theme.axis, lw=0.8, zorder=2)
-        ax.text(lx, ly, text, fontsize=8.5, color=theme.ink2, va="center")
+        ax.text(
+            lx,
+            ly,
+            text,
+            fontsize=8.5,
+            color=theme.ink2,
+            va="center",
+            zorder=6,
+            bbox={"boxstyle": "square,pad=0.1", "facecolor": theme.surface, "edgecolor": "none"},
+        )
     learned = sorted(
         (r for p, r in rows.items() if p.startswith("learned")), key=lambda r: r["cost"]
     )
@@ -646,7 +664,8 @@ def main() -> None:
     parser.add_argument("--estimate", default="runs/estimate")
     parser.add_argument("--selective", default="runs/selective")
     parser.add_argument("--recover", default="runs/recover/results.json")
-    parser.add_argument("--animate", default="musique", help="dataset for the animation")
+    parser.add_argument("--animate", default="squad_v2", help="dataset for the animation")
+    parser.add_argument("--animate-from", default="runs/selective", help="selective run to animate")
     args = parser.parse_args()
     ASSETS.mkdir(parents=True, exist_ok=True)
     for mode in THEMES:
@@ -671,8 +690,9 @@ def main() -> None:
         }
         for mode in THEMES:
             plot_risk_coverage(scores, results, ASSETS / f"risk-coverage-{mode}.png", mode)
-        if args.animate in scores:
-            data = scores[args.animate]
+        source = Path(args.animate_from) / f"scores-{args.animate}.npz"
+        if source.exists():
+            data = dict(np.load(source))
             half = int(data["half"])
             from sufficiency.selective import SelectiveRule
 
