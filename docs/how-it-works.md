@@ -104,8 +104,14 @@ When the context is not enough, there are several standard fixes, each with a pr
 | `expand` | retrieve twice as many passages | 1 retrieval |
 | `feedback` | add frequent terms from the top passages to the query and retrieve again | 1 retrieval |
 | `rewrite` | have an LLM rewrite the query (falls back to `feedback`) | 1 LLM call + 1 retrieval |
-| `decompose` | split the question into sub-questions and retrieve for each | 1 LLM call (if used) + 1 retrieval per sub-question |
+| `decompose` | split the question into sub-questions and retrieve for each, hop by hop | 1 LLM call (if used) + 1 retrieval and 1 reader call per hop |
+| `hop` | retrieve again with each name the top passages mention and the question does not | 1 retrieval per name |
 | `switch` | retrieve with a different retriever (for example dense instead of BM25) | 1 retrieval |
+
+Multi-hop questions need hop-by-hop decomposition: "Where was the founder of #1 born?"
+can only be retrieved once hop 1 is answered. `decompose` therefore works through the
+sub-questions in order, and a reader fills each `#n` with the answer to hop `n` from
+the passages retrieved for it. `ChatDecomposer` asks an LLM for such sub-questions.
 
 Which action helps depends on the question. Expanding helps when the answer is just
 below the cut-off; decomposition helps when a later hop's entity never appears in the
