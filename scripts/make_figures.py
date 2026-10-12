@@ -199,7 +199,12 @@ def plot_discrimination(summaries: list[dict[str, Any]], out: Path, mode: str) -
     order = list(BAR_LABELS)
     fig, axes = plt.subplots(1, len(summaries), figsize=(7.6, 3.5), sharey=True)
     axes = np.atleast_1d(axes)
-    test_sizes = ", ".join(f"{s['test']:,}" for s in summaries)
+    sizes = {s["test"] for s in summaries}
+    test_sizes = (
+        f"{sizes.pop():,} per dataset"
+        if len(sizes) == 1
+        else ", ".join(f"{s['test']:,}" for s in summaries)
+    )
     _title(
         fig,
         "Is the context enough? Which signal knows",
@@ -259,7 +264,7 @@ def reliability(
 
 def plot_calibration(curves: dict[str, dict[str, Any]], out: Path, mode: str) -> Path:
     theme = use_theme(mode)
-    fig, axes = plt.subplots(1, len(curves), figsize=(7.6, 3.2), sharey=True)
+    fig, axes = plt.subplots(1, len(curves), figsize=(7.6, 3.6), sharey=True)
     axes = np.atleast_1d(axes)
     _title(
         fig,
@@ -291,9 +296,9 @@ def plot_calibration(curves: dict[str, dict[str, Any]], out: Path, mode: str) ->
             va="top",
             weight="bold",
         )
-        ax.text(0.04, 0.85, f"ECE {c['ece_hand']:.3f}", color=theme.ink2, fontsize=9, va="top")
-        ax.scatter([0.015], [0.937], s=16, color=theme.series[0], clip_on=False)
-        ax.scatter([0.015], [0.837], s=16, color=theme.series[1], clip_on=False)
+        ax.text(0.1, 0.85, f"ECE {c['ece_hand']:.3f}", color=theme.ink2, fontsize=9, va="top")
+        ax.scatter([0.06], [0.925], s=18, color=theme.series[0])
+        ax.scatter([0.06], [0.825], s=18, color=theme.series[1])
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         _percent_axis(ax, "x", (0.0, 0.5, 1.0))
@@ -312,7 +317,7 @@ def plot_calibration(curves: dict[str, dict[str, Any]], out: Path, mode: str) ->
         ncol=3,
         bbox_to_anchor=(0.5, 0.0),
     )
-    fig.subplots_adjust(left=0.08, right=0.98, top=0.74, bottom=0.2, wspace=0.18)
+    fig.subplots_adjust(left=0.08, right=0.98, top=1 - 1.15 / 3.6, bottom=0.2, wspace=0.18)
     return _save(fig, out)
 
 
@@ -328,14 +333,14 @@ def plot_risk_coverage(
 ) -> Path:
     theme = use_theme(mode)
     by_name = {r["dataset"]: r for r in results}
-    fig, axes = plt.subplots(1, len(selective), figsize=(7.6, 3.4), sharey=True)
+    fig, axes = plt.subplots(1, len(selective), figsize=(7.6, 3.9), sharey=True)
     axes = np.atleast_1d(axes)
     _title(
         fig,
         "Answer only when the context is enough",
         "Error rate among answered questions (y) as more questions are answered (x), "
-        "highest score first, on\nheld-out questions. The ring marks the threshold certified "
-        "for at most 20% error (90% confidence).",
+        "highest score first, on\nheld-out questions. Rings mark the threshold certified for "
+        "at most 20% error (90% confidence).",
         theme,
     )
     for ax, (name, data) in zip(axes, selective.items(), strict=True):
@@ -343,7 +348,8 @@ def plot_risk_coverage(
         rows = {r["scorer"]: r for r in by_name[name]["rows"]}
         for scorer, (_, slot) in SCORERS.items():
             cov, risk = risk_coverage(data[scorer][half:], ok[half:])
-            ax.plot(cov, risk, color=theme.series[slot], lw=2)
+            start = 19  # skip the first answers, where one error swings the rate wildly
+            ax.plot(cov[start:], risk[start:], color=theme.series[slot], lw=2)
             point = rows[scorer]["ltt@0.2"]
             if point["coverage"] > 0:
                 ax.scatter(
@@ -356,9 +362,9 @@ def plot_risk_coverage(
                     zorder=4,
                 )
         ax.axhline(0.2, color=theme.ink, lw=1, ls=(0, (3, 2)))
-        ax.set_xlim(0, 1)
+        ax.set_xlim(0, 1.02)
         ax.set_ylim(0, 1)
-        _percent_axis(ax, "x", (0.0, 0.5, 1.0))
+        _percent_axis(ax, "x", (0.25, 0.5, 0.75, 1.0))
         _percent_axis(ax, "y", (0.0, 0.2, 0.5, 1.0))
         ax.set_xlabel("answered")
         ax.set_title(
@@ -380,35 +386,63 @@ def plot_risk_coverage(
         ncol=4,
         bbox_to_anchor=(0.5, 0.0),
     )
-    fig.subplots_adjust(left=0.08, right=0.98, top=0.7, bottom=0.27, wspace=0.12)
+    fig.subplots_adjust(left=0.08, right=0.98, top=1 - 1.45 / 3.9, bottom=0.25, wspace=0.16)
     return _save(fig, out)
+
+
+ACTION_LABELS = {
+    "keep": "keep",
+    "expand": "expand to top 10",
+    "feedback": "query feedback",
+    "decompose": "split the question",
+    "hop": "follow names",
+    "switch": "switch to dense",
+    "decompose-llm": "LLM decomposition, hop by hop",
+}
+
+
+def _spread(points: list[tuple[float, float, str]], gap: float) -> list[tuple[float, float, str]]:
+    """Nudge label heights apart so labels of nearby points do not overlap."""
+    placed: list[tuple[float, float, str]] = []
+    for x, y, text in sorted(points, key=lambda p: p[1]):
+        for px, py, _ in placed:
+            if abs(px - x) < 0.9 and y - py < gap:
+                y = py + gap
+        placed.append((x, y, text))
+    return placed
 
 
 def plot_recovery(summary: dict[str, Any], out: Path, mode: str) -> Path:
     theme = use_theme(mode)
     rows = {r["policy"]: r for r in summary["rows"]}
-    fig = plt.figure(figsize=(7.6, 4.0))
+    fig = plt.figure(figsize=(7.6, 4.2))
     _title(
         fig,
         "Which fix makes the context enough, and at what cost?",
         f"{summary['test_questions']:,} held-out MuSiQue questions, 2 to 4 hops, open "
         f"retrieval over {summary['corpus']:,} paragraphs. Success = every\nsupporting "
-        "paragraph is in the context. Cost = retrieval and LLM calls per question.",
+        "paragraph is in the context. Cost = retrieval and model calls per question.",
         theme,
     )
-    ax = fig.add_axes((0.08, 0.12, 0.62, 0.62))
+    ax = fig.add_axes((0.08, 0.12, 0.6, 0.6))
     fixed = [p for p in rows if p.startswith("always ") and p != "always decompose-gold"]
+    shown = [rows[p] for p in fixed] + [r for p, r in rows.items() if not p.startswith("always")]
+    top = max(r["success"] for r in rows.values())
+    ax.set_ylim(0, top * 1.18 + 0.02)
+    ax.set_xlim(-0.2, max(r["cost"] for r in shown) * 1.08 + 1.6)
+    labels = []
     for p in fixed:
         r = rows[p]
         ax.scatter([r["cost"]], [r["success"]], s=46, color=theme.neutral, zorder=3)
-        ax.annotate(
-            p.removeprefix("always "),
-            (r["cost"], r["success"]),
-            xytext=(6, -3),
-            textcoords="offset points",
-            fontsize=8.5,
-            color=theme.ink2,
-        )
+        name = p.removeprefix("always ")
+        labels.append((r["cost"], r["success"], ACTION_LABELS.get(name, name)))
+    span = top * 1.18 + 0.02
+    for (x, y, text), (_, ly, _) in zip(
+        sorted(labels, key=lambda p: p[1]), _spread(labels, gap=span * 0.075), strict=True
+    ):
+        lx = x + 0.35
+        ax.plot([x + 0.04, lx - 0.03], [y, ly], color=theme.axis, lw=0.8, zorder=2)
+        ax.text(lx, ly, text, fontsize=8.5, color=theme.ink2, va="center")
     learned = sorted(
         (r for p, r in rows.items() if p.startswith("learned")), key=lambda r: r["cost"]
     )
@@ -438,7 +472,7 @@ def plot_recovery(summary: dict[str, Any], out: Path, mode: str) -> Path:
     ax.scatter(
         [oracle["cost"]],
         [oracle["success"]],
-        s=120,
+        s=140,
         marker="*",
         zorder=4,
         color=theme.series[2],
@@ -449,16 +483,15 @@ def plot_recovery(summary: dict[str, Any], out: Path, mode: str) -> Path:
     if gold:
         ax.axhline(gold["success"], color=theme.neutral, lw=1, ls=(0, (3, 2)))
         ax.text(
-            0.02,
-            gold["success"] + 0.01,
-            "decomposition with gold sub-questions",
+            0.98,
+            gold["success"] + 0.008,
+            "annotated sub-questions, hop by hop (upper bound)",
+            ha="right",
+            va="bottom",
             fontsize=8,
             color=theme.muted,
             transform=ax.get_yaxis_transform(),
         )
-    lo = min(r["success"] for r in rows.values())
-    ax.set_ylim(max(0.0, lo - 0.08), min(1.0, max(r["success"] for r in rows.values()) + 0.08))
-    ax.set_xlim(-0.1, max(r["cost"] for r in rows.values()) * 1.12 + 0.2)
     ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
     ax.set_xlabel("calls per question")
     ax.set_ylabel("context sufficient")
@@ -480,7 +513,7 @@ def plot_recovery(summary: dict[str, Any], out: Path, mode: str) -> Path:
             "One action for\nevery question",
         ],
         loc="center left",
-        bbox_to_anchor=(0.72, 0.43),
+        bbox_to_anchor=(0.71, 0.42),
         labelspacing=1.3,
     )
     return _save(fig, out)
@@ -497,7 +530,7 @@ def animate_threshold(
     ok, half = data["ok"], int(data["half"])
     scores, good = data["estimator"][half:], ok[half:]
     target = rule["threshold"]
-    fig = plt.figure(figsize=(7.6, 3.9))
+    fig = plt.figure(figsize=(7.6, 4.2))
     _title(
         fig,
         f"Choosing when to answer ({DATASETS.get(name, name)})",
@@ -506,8 +539,8 @@ def animate_threshold(
         "Orange: it would be wrong.",
         theme,
     )
-    ax = fig.add_axes((0.05, 0.2, 0.6, 0.52))
-    side = fig.add_axes((0.72, 0.2, 0.25, 0.52))
+    ax = fig.add_axes((0.05, 0.25, 0.6, 0.48))
+    side = fig.add_axes((0.72, 0.25, 0.25, 0.48))
     rng = np.random.default_rng(0)
     jitter = rng.uniform(0.05, 0.95, len(scores))
     colors = [theme.series[2] if g else theme.series[1] for g in good]
@@ -543,7 +576,7 @@ def animate_threshold(
     side.set_title("error among answered", fontsize=9, color=theme.ink2, loc="left")
     side.grid(True)
     side.tick_params(length=0, pad=4)
-    status = fig.text(0.05, 0.05, "", fontsize=10.5, color=theme.ink)
+    status = fig.text(0.05, 0.035, "", fontsize=10.5, color=theme.ink)
     sweep = list(np.linspace(1.0, target, 40)) if np.isfinite(target) else []
     frames = [*sweep, *([target] * 18)] if sweep else [1.0]
 
